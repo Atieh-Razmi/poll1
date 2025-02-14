@@ -9,26 +9,35 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.contrib.auth.models import User
 from rest_framework.decorators import action
 from rest_framework import status
+from django.shortcuts import get_object_or_404
 
-# Create your views here.
+
 
 class PollViewSet(viewsets.ModelViewSet):
     queryset = Poll.objects.all()
     serializer_class = PollSerializer
 
-    filter_backends = (filters.SearchFilter,)
-    search_fields = ['category__name',]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+
+    search_fields = ['name',]
+    ordering_fields = ['total_vote',]
     permission_classes = [AllowAny,]
+    filterset_fields = ['category',]
 
 
     @action(detail=True, methods=['post'])
-    def vote(self,request, pk):
-        poll = self.get_object()
+    def vote(self,request, pk=None):
+        poll = get_object_or_404(Poll, pk=pk)
         choice_id = request.data.get('choice_id')
+        if not choice_id:
+            return Response({"error": "You didn't select a choice."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            choice = poll.choices.get(id=choice_id)
+            selected_choice = poll.choices.get(pk=choice_id)
+            if Vote.objects.filter(user=request.user, choice=selected_choice).exists():
+                return Response({"error": "you vote this choice before"}, status=status.HTTP_400_BAD_REQUEST)
+            selected_choice.vote_count += 1
+            vote = Vote.objects.create(user=request.user, choice=selected_choice)
+            selected_choice.save()
+            return Response({"message": "Vote recorded successfully!"})
         except Choice.DoesNotExist:
-            return Response({'error':'not exist'})
-
-        vote = Vote.objects.create(user=request.user, choice=choice)
-        return Response({'message':'create'})       
+            return Response({"error": "Invalid choice selected."}, status=status.HTTP_400_BAD_REQUEST)       
